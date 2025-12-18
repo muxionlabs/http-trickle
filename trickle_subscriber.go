@@ -12,6 +12,33 @@ import (
 	"time"
 )
 
+type SequenceStart int
+
+const (
+	Current SequenceStart = -2
+	Next                  = -1
+)
+
+// TrickleSubscriberConfig holds all NewTrickleSubscriber inputs.
+// Pass this by value; any nil or zero will fall back to defaults.
+type TrickleSubscriberConfig struct {
+
+	// Trickle URL to subscribe to (required).
+	URL string
+
+	// Pass in a context for custom cancellation of
+	// the entire subscription.
+	//
+	// Setting a context here is unusual but aligns
+	// better with how contexts are used internally
+	// (eg, they do not strictly map to a single Read request)
+	Ctx context.Context
+
+	// Set the index of the first sequence to read.
+	// Pointer to distinguish unset from a valid zero field.
+	Start *SequenceStart
+}
+
 var EOS = errors.New("End of stream")
 
 type SequenceNonexistent struct {
@@ -33,6 +60,7 @@ type TrickleSubscriber struct {
 	url        string
 	mu         sync.Mutex      // Mutex to manage concurrent access
 	pendingGet *http.Response  // Pre-initialized GET request
+	baseCtx    context.Context // base context to use for the next context
 	ctx        context.Context // Parent context to use for pending GETs. This is bad
 	cancelCtx  func()          // cancel the pending GET
 	idx        int             // Segment index to request
@@ -42,16 +70,33 @@ type TrickleSubscriber struct {
 }
 
 // NewTrickleSubscriber creates a new trickle stream reader for GET requests
-func NewTrickleSubscriber(url string) *TrickleSubscriber {
-	// No preconnect needed here; it will be handled by the first Read call.
-	ctx, cancel := context.WithCancel(context.Background())
+func NewTrickleSubscriber(config TrickleSubscriberConfig) (*TrickleSubscriber, error) {
+
+	if config.URL == "" {
+		return nil, errors.New("trickle subscription URL missing")
+	}
+
+	// Context + cancel
+	baseCtx := config.Ctx
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+	ctx, cancel := context.WithCancel(baseCtx)
+
+	// Starting index
+	idx := int(Next)
+	if config.Start != nil {
+		idx = int(*config.Start)
+	}
+
 	return &TrickleSubscriber{
 		client:    httpClient(),
-		url:       url,
+		url:       config.URL,
+		baseCtx:   baseCtx,
 		ctx:       ctx,
 		cancelCtx: cancel,
-		idx:       -1, // shortcut for 'latest'
-	}
+		idx:       idx,
+	}, nil
 }
 
 func GetSeq(resp *http.Response) int {
@@ -90,8 +135,10 @@ func (c *TrickleSubscriber) SetSeq(seq int) {
 	c.cancelCtx()
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// Reset client in case SetSeq is called due to slow reads falling too far behind
+	c.client = httpClient()
 	c.idx = seq
-	c.ctx, c.cancelCtx = context.WithCancel(context.Background())
+	c.ctx, c.cancelCtx = context.WithCancel(c.baseCtx)
 	c.pendingGet = nil
 	c.preconnectErrorCount = 0
 }

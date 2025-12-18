@@ -23,7 +23,13 @@ func main() {
 		return
 	}
 
-	client := trickle.NewTrickleSubscriber(*baseURL + "/" + *streamName)
+	client, err := trickle.NewTrickleSubscriber(trickle.TrickleSubscriberConfig{
+		URL: *baseURL + "/" + *streamName,
+	})
+	if err != nil {
+		slog.Error("Error starting trickle subscriber")
+		return
+	}
 
 	for {
 		// Read and process the first segment

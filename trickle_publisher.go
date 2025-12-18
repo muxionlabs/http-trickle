@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 )
 
 var StreamNotFoundErr = errors.New("stream not found")
@@ -139,6 +140,13 @@ func (c *TricklePublisher) Close() error {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("Failed to delete stream: %v - %s", resp.Status, string(body))
 	}
+	// Close any pending writers
+	c.writeLock.Lock()
+	pp := c.pendingPost
+	if pp != nil {
+		pp.writer.Close()
+	}
+	c.writeLock.Unlock()
 	return nil
 }
 
@@ -187,7 +195,7 @@ func (c *TricklePublisher) Next() (*pendingPost, error) {
 
 func (p *pendingPost) reconnect() (*pendingPost, error) {
 	// This is a little gnarly but works for now:
-	// Set the publisher's sequence sequence to the intended reconnect
+	// Set the publisher's sequence to the intended reconnect
 	// Call publisher's preconnect (which increments its sequence)
 	// then reset publisher's sequence back to the original
 	// Also recreate the client to force a fresh connection
@@ -224,6 +232,7 @@ func (p *pendingPost) Write(data io.Reader) (int64, error) {
 	// before writing, check for error from preconnects
 	select {
 	case err := <-errCh:
+		writer.Close()
 		return 0, err
 	default:
 		// no error, continue
@@ -239,6 +248,8 @@ func (p *pendingPost) Write(data io.Reader) (int64, error) {
 
 		// Close the pipe writer to signal end of data for the current POST request
 		closeErr = writer.Close()
+	} else {
+		writer.Close()
 	}
 
 	// check for errors after write, eg >=400 status codes
@@ -246,6 +257,7 @@ func (p *pendingPost) Write(data io.Reader) (int64, error) {
 	// also prioritize errors over this channel compared to io errors
 	// such as "read/write on closed pipe"
 	if err := <-errCh; err != nil {
+		writer.Close()
 		return n, err
 	}
 
@@ -309,6 +321,9 @@ func httpClient() *http.Client {
 		// DisableKeepAlives: true,
 		// ignore orch certs for now
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+
+		// Prevent old TCP connections from accumulating
+		IdleConnTimeout: 1 * time.Minute,
 	}}
 }
 

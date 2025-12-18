@@ -42,7 +42,13 @@ func segmentPoster(streamName string) *SegmentPoster {
 }
 
 func runSubscribe(streamName string) error {
-	client := trickle.NewTrickleSubscriber(*baseURL + "/" + streamName)
+	client, err := trickle.NewTrickleSubscriber(trickle.TrickleSubscriberConfig{
+		URL: *baseURL + "/" + streamName,
+	})
+	if err != nil {
+		slog.Error("Error starting trickle subscriber", "err", err)
+		return err
+	}
 	outPipe, err := os.OpenFile(*outFile, os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		slog.Error("Error opening subscribe output", "stream", streamName, "err", err)

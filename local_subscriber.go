@@ -44,9 +44,12 @@ func (c *TrickleLocalSubscriber) Read() (*TrickleData, error) {
 		if closed {
 			return nil, EOS
 		}
-		return nil, &SequenceNonexistent{Latest: latestSeq, Seq: c.seq}
+		return nil, errors.New("seq not found")
 	}
-	c.seq++
+	seq := segment.idx
+	if seq >= 0 {
+		c.seq = seq + 1
+	}
 	r, w := io.Pipe()
 	go func() {
 		subscriber := &SegmentSubscriber{

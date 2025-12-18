@@ -20,7 +20,12 @@ func main() {
 		log.Fatalf("Error: stream name is required. Use -stream flag to specify the stream name.")
 	}
 
-	client := trickle.NewTrickleSubscriber(*baseURL + "/" + *streamName)
+	client, err := trickle.NewTrickleSubscriber(trickle.TrickleSubscriberConfig{
+		URL: *baseURL + "/" + *streamName,
+	})
+	if err != nil {
+		log.Fatalf("Error starting trickle subscriber")
+	}
 
 	for i := 0; true; i++ {
 		// Read and process the first segment
